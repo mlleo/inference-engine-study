@@ -62,9 +62,9 @@
   - How should an LLM serving router jointly schedule prefill compute, decode memory bandwidth, and cross-vendor KV transport under SLO contraints?
  
 ## Reference Paper
-Disaggregated Prefill and Decoding Inference System for Large Language Model Serving on Multi-Vendor GPUs
+- Disaggregated Prefill and Decoding Inference System for Large Language Model Serving on Multi-Vendor GPUs
 -> multi-vendor based gpu pd disaggregation inference
-FlowKV: Low-Latency KV Cache Transfer and Load-Aware Scheduling
+- FlowKV: Low-Latency KV Cache Transfer and Load-Aware Scheduling
 -> kv cache transfer bottleneck : block-wise calling, discontinuout kv cache allocation
-TaiChi: Prefill-Decode Aggregation or Disaggregation? Unifying Both for Goodput-Optimized LLM Serving
+- TaiChi: Prefill-Decode Aggregation or Disaggregation? Unifying Both for Goodput-Optimized LLM Serving
 -> always pd disaggreagtion good? no, need hybrid scheduling for goodput
