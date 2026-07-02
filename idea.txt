@@ -1,0 +1,143 @@
+WHY H100 + MI300X IS INTERESTING
+    =================================
+    
+      H100:  989 TFLOPS FP16, 3350 GB/s HBM, 80GB HBM3
+             -> Compute-rich, relatively lower bandwidth/capacity
+             -> Ideal for prefill (compute-bound, GEMM-heavy)
+    
+      MI300X: 1307 TFLOPS FP16, 5300 GB/s HBM, 192GB HBM3
+              -> Memory-rich, massive bandwidth and capacity
+              -> Ideal for decode (memory-bandwidth-bound, KV-cache-heavy)
+    
+    The asymmetry is not just "different speeds" -- it is fundamentally different compute-to-memory RATIOS. This creates non-trivial optimization problems.
+    
+    
+    RESEARCH TOPICS (not engineering)
+    ==================================
+    
+    I will rank these by novelty and research depth.
+    
+    
+    TOPIC 1: Cross-Vendor KV Cache Transfer (Highest Novelty)
+    
+    
+    THE PROBLEM:
+    When prefill finishes on H100, the KV cache must be transferred to MI300X for decode. This sounds like "just copy memory" but it is not, for several reasons:
+    
+      a) FORMAT MISMATCH: NVIDIA FlashAttention and AMD's attention implementation (via ROCm/VLLM) may lay out the KV cache differently in memory (different tensor strides, different head ordering, different padding). You cannot just memcpy.
+    
+      b) PRECISION MISMATCH: H100 supports FP8 (E4M3) natively; MI300X also supports FP8 but with a different format. If prefill uses FP8 on H100, can MI300X consume that KV cache directly? If not, what precision should the transfer use?
+    
+      c) TRANSFER COST: The KV cache for a 70B model with 4K context can be several GB. Transferring this over PCIe/NVLink (within node) or network (across nodes) adds latency to every request. How to minimize this?
+    
+    RESEARCH QUESTIONS:
+      - What is the minimum-fidelity KV cache representation that can be transferred across vendors without quality degradation?
+      - Can we compress/quantize the KV cache for transfer (e.g., to INT4 or FP8) and decompress on the decode side? What is the accuracy impact?
+      - Is there a universal KV cache format that both vendors can produce/consume efficiently?
+      - Can we overlap KV cache transfer with prefill computation to hide the transfer latency?
+    
+    WHY THIS IS RESEARCH: It requires understanding the numerical precision tradeoffs, attention kernel internals across vendors, and designing a transfer protocol that balances latency, bandwidth, and accuracy. No prior work addresses this.
+    
+    
+    TOPIC 2: Optimal Disaggregation Boundary Under Cross-Vendor Asymmetry
+    
+    
+    THE PROBLEM:
+    Splitwise and DistServe disaggregate at the prefill/decode boundary. But with cross-vendor asymmetry, the optimal split point is not obvious:
+    
+      - Should ALL prefill happen on H100 and ALL decode on MI300X? Or should some layers run on the "wrong" vendor to balance the pipeline?
+      - The compute-to-memory ratio differs: H100 has 989/3350 = 0.295 TFLOPS per GB/s; MI300X has 1307/5300 = 0.247. This asymmetry means the optimal batch size, parallelism strategy, and layer assignment differ from same-vendor setups.
+      - For short-output workloads (prefill-heavy), the H100 may be underutilized if it only does prefill. For long-output workloads (decode-heavy), the MI300X may be overloaded.
+    
+    RESEARCH QUESTIONS:
+      - Given a cross-vendor GPU pair and a workload trace, what is the optimal disaggregation strategy? (formal optimization problem)
+      - When is it beneficial to run some decode layers on H100 (or some prefill layers on MI300X) to balance the pipeline?
+      - How does the optimal strategy change with model size, context length, and output length distribution?
+      - Can we formulate this as a constrained optimization (like Helix's max-flow) but with the additional dimension of vendor-level compute/memory asymmetry?
+    
+    WHY THIS IS RESEARCH: It requires a new analytical model that captures vendor-level asymmetry (not just speed differences). The optimization space is larger than same-vendor disaggregation because you must decide not just "how many GPUs per phase" but "which vendor for which layers."
+    
+    
+    TOPIC 3: Adaptive Scheduling Under Workload-Vendor Interaction
+    
+    
+    THE PROBLEM:
+    The optimal allocation of H100s and MI300Xs to prefill vs. decode changes dynamically with workload:
+    
+      - Short prompt + long output (chatbot, coding): Decode-heavy -> need more MI300X
+      - Long prompt + short output (summarization, RAG): Prefill-heavy -> need more H100
+      - Mixed workload: Need to dynamically rebalance
+    
+    With same-vendor disaggregation (Splitwise, DistServe), you can statically assign machines to prefill/decode pools. With cross-vendor, you CANNOT -- an H100 is a poor decode engine and an MI300X is a suboptimal prefill engine. So the assignment is more constrained.
+    
+    RESEARCH QUESTIONS:
+      - What is the online scheduling policy that dynamically allocates cross-vendor GPUs to prefill/decode pools based on real-time workload?
+      - How to handle the "trapped resource" problem: if all MI300Xs are busy decoding and a large prefill request arrives, should you run prefill on MI300X (suboptimal) or queue it?
+      - Can we use speculative decoding across vendors (H100 as draft, MI300X as verifier) as a dynamic load balancing mechanism?
+      - What is the theoretical lower bound on latency given a fixed set of cross-vendor GPUs and a workload distribution?
+    
+    WHY THIS IS RESEARCH: This is an online optimization problem with non-trivial constraints (vendor-specific compute/memory ratios, non-preemptible decode phases, KV cache transfer costs). It requires new scheduling algorithms, not just heuristics.
+    
+    
+    TOPIC 4: Numerical Consistency and Accuracy Across Vendors
+    
+    
+    THE PROBLEM:
+    NVIDIA and AMD GPUs produce slightly different floating-point results due to:
+      - Different FP16/BF16 accumulation order in tensor cores vs. matrix cores
+      - Different attention kernel implementations (FlashAttention vs. ROCm attention)
+      - Different FP8 formats (E4M3 on H100 vs. E4M3 on MI300X, but different rounding)
+    
+    When prefill runs on H100 and decode on MI300X, the model's internal states may diverge from a single-vendor run. This could cause:
+      - Different token probabilities at the prefill/decode boundary
+      - Accumulated quality degradation over long generations
+      - Non-determinism in outputs
+    
+    RESEARCH QUESTIONS:
+      - What is the magnitude of numerical divergence when prefill and decode run on different vendors?
+      - Does this divergence cause measurable quality degradation (perplexity, MMLU, HumanEval) compared to single-vendor inference?
+      - Can we design a "numerical bridge" that normalizes the internal states at the vendor boundary?
+      - Is there a precision configuration that minimizes divergence while maintaining throughput?
+    
+    WHY THIS IS RESEARCH: This requires empirical study + numerical analysis. Nobody has measured whether cross-vendor inference produces the same quality as single-vendor. If it does not, the mitigation strategies are non-trivial.
+    
+    
+    TOPIC 5: Cost-Optimal Cluster Composition Under Cross-Vendor Disaggregation
+    
+    
+    THE PROBLEM:
+    H100s and MI300Xs have different costs (~$25-40K vs ~$10-15K per GPU). If MI300X is nearly as good for decode as H100 but much cheaper, the cost-optimal cluster design changes fundamentally.
+    
+    RESEARCH QUESTIONS:
+      - Given a target SLO (TTFT, TPOT) and a workload distribution, what is the cost-optimal ratio of H100 to MI300X in a disaggregated cluster?
+      - How does this ratio change with model size (7B, 70B, 405B)?
+      - Can we build a capacity planning model that jointly optimizes cost, throughput, and latency under cross-vendor asymmetry?
+      - What is the Pareto frontier of cost vs. latency for different H100:MI300X ratios?
+    
+    WHY THIS IS RESEARCH: This is a constrained optimization problem with real economic implications. It requires modeling the performance of each vendor for each phase, then solving a cost-minimization problem. The results could influence datacenter procurement decisions.
+    
+    
+    WHAT IS "JUST ENGINEERING" (NOT RESEARCH)
+    ===========================================
+    
+      - Porting vLLM to run on AMD GPUs (already done by AMD, vLLM supports ROCm)
+      - Setting up network between H100 and MI300X nodes (standard infra)
+      - Writing code to transfer tensors between vendors (implementation)
+      - Benchmarking H100 vs MI300X individually (measurement, not research)
+      - Building a CI pipeline for cross-vendor testing (engineering)
+      - Wrapping NVIDIA and AMD runtimes behind a unified API (engineering)
+    
+    
+    MY RECOMMENDATION
+    ==================
+    
+    If you want the strongest single research contribution, I would go with TOPIC 1 (Cross-Vendor KV Cache Transfer) combined with TOPIC 2 (Optimal Disaggregation Boundary). Together they tell a complete story:
+    
+      "We identify that cross-vendor disaggregated inference introduces a new challenge: the KV cache transfer across vendor boundaries is not a simple memory copy due to format, precision, and layout mismatches. We design a universal KV cache transfer protocol and formally optimize the disaggregation boundary under cross-vendor compute/memory asymmetry."
+    
+    This is clearly research because:
+      - It identifies a problem that does not exist in same-vendor systems
+      - It requires new algorithms (transfer protocol, optimization formulation)
+      - It has measurable quality implications (accuracy, latency, throughput)
+      - It is timely (AMD MI300X is gaining adoption, cross-vendor clusters are emerging)
+      - Nobody has done it
