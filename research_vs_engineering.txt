@@ -24,6 +24,59 @@ ENGINEERING
 
 Research
 
+1. Adaptive prefill / decode allocation
+
+Problem : "Always H100=prefill, MI300X=decode" is not optimal. The allocation of H100 and MI300X instances to prefill and decode pools should adapt based on below factors.
+
+Factor 1. Workload type
+- Decode-heavy (chatbot, coding): MI300Xs saturated, H100s idle
+- Prefill-heavy (RAG, summarization): H100s saturated, MI300Xs idle
+- Mixed: need dynamic rebalance
+
+Factor 2. QUEUEING STATUS (real-time)
+- Even for the same workload type, queue lengths change in real-time
+- If prefill queue on H100 is long but MI300X decode queue is empty -> should some MI300Xs run prefill? (slower but reduces H100 queue)
+- If decode queue on MI300X is long but H100 prefill queue is empty -> should some H100s run decode? (wastes compute but clears queue)
+
+GOAL: Minimize H100 count while meeting SLO, given MI300X pool and dynamic workload.
+
+Reference
+1. Kairos (https://arxiv.org/pdf/2605.02329)
+- SLO-aware scheduling for disaggregated serving
+- Prefill side: urgency-based priority scheduling (predicts prefill completion times, selects requests to maximize TTFT SLO)
+- Decode side: slack-guided adaptive batching (uses gap between per-step decode time and TPOT SLO to pack more requests)
+- Result: 23.9% TTFT SLO improvement, 27.1% TPOT SLO improvement
+- RELEVANCE: Good baseline for SLO-aware scheduling. But assumes homogeneous GPUs. Cross-vendor adds: which vendor to schedule on, not just when to schedule.
+
+
+2. NetKV (https://arxiv.org/pdf/2606.03910)
+- Network-aware decode instance selection
+- Key insight: ignoring network topology makes scheduling arbitrarily suboptimal as context grows
+- O(|D|) greedy algorithm with provable robustness to stale telemetry
+- Result: 21.2% mean TTFT reduction
+- RELEVANCE: Cross-vendor transfer has HIGHER network cost (different nodes, potentially different network paths). The network-aware selection is even more critical cross-vendor.
+
+3. HexAGent (https://arxiv.org/pdf/2605.16637)
+- Workflow-aware scheduling for heterogeneous GPU clusters (A100/H100/H200)
+- Models each request as online-revealed DAG, jointly selects prefill placement, decode placement, and queue priority
+- Result: 20-33% SLO scale reduction
+- RELEVANCE: Closest to heterogeneous GPU scheduling. But all NVIDIA GPUs. Cross-vendor adds: KV cache format conversion cost, numerical divergence, different software stacks. The placement decision is not just about compute/memory but also about vendor boundary crossing cost.
+
+4. ConServe (https://arxiv.org/pdf/2410.01228)
+- Conversation-level disaggregated scheduling for agentic workloads
+- Key insight: raise scheduling unit from turn to conversation
+- Maps two phases onto heterogeneous GPU tiers for 22.75% energy efficiency gain
+- RELEVANCE: Shows that heterogeneous GPU tiers help. But doesn't address cross-vendor or dynamic reallocation.
+
+5. HMA-Serve (https://arxiv.org/pdf/2606.29986)
+- Cross-vendor disaggregated serving! Pairs GDDR-based accelerators for prefill with HBM-based GPUs for decode
+- Uses phase-wise quantization, compute-transfer pipeline, deferred dequantization
+- Result: 3.2x goodput, 4.8x goodput-per-dollar
+- RELEVANCE: This is the closest prior work to your idea. It proves cross-vendor disaggregation works.
+- Limitations : It uses GDDR accelerators (not H100) for prefill, It focuses on system design, NOT adaptive scheduling, Static allocation (GDDR=prefill, HBM=decode always), Does NOT study when to deflect prefill to HBM or decode to GDDR, Does NOT study workload-dependent or queue-dependent allocation, Does NOT use SGLang or address RadixAttention
+
+
+
 1. KV CACHE COMPRESSION/QUANTIZATION FOR CROSS-VENDOR TRANSFER
 - Can you compress KV cache to INT4/FP8 for transfer, then decompress on MI300X?
 - Maybe INT4 works fine for 7B but degrades 70B. Maybe FP8 is fine but INT4 breaks long-context generation. (uncertainty)
