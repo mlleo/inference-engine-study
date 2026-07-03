@@ -75,6 +75,70 @@ Reference
 - RELEVANCE: This is the closest prior work to your idea. It proves cross-vendor disaggregation works.
 - Limitations : It uses GDDR accelerators (not H100) for prefill, It focuses on system design, NOT adaptive scheduling, Static allocation (GDDR=prefill, HBM=decode always), Does NOT study when to deflect prefill to HBM or decode to GDDR, Does NOT study workload-dependent or queue-dependent allocation, Does NOT use SGLang or address RadixAttention
 
+6. Prefill Deflection (https://arxiv.org/pdf/2607.02043)
+
+
+THE RESEARCH GAP (WHAT NOBODY HAS DONE):
+
+    
+
+      HMA-Serve proves cross-vendor disaggregation works at the system
+
+      level. Prefill Deflection shows dynamic prefill/decode reallocation
+
+      helps. But NOBODY has combined them:
+
+    
+
+      - Cross-vendor + adaptive scheduling: when should H100 handle decode
+
+        or MI300X handle prefill, given vendor asymmetry AND queue state?
+
+      - The cost model is fundamentally different from same-vendor:
+
+        - Deflecting prefill to MI300X: slower compute (1307 vs 1979 TFLOPS)
+
+        - Deflecting decode to H100: wastes expensive compute, lower bandwidth
+
+          (3350 vs 5300 GB/s)
+
+        - The cost asymmetry between vendors makes the deflection decision
+
+          harder than same-vendor
+
+      - SGLang RadixAttention: prefix cache management across vendor boundary
+
+        is unique to SGLang and not addressed by any prior work
+
+    
+
+    SPECIFIC RESEARCH QUESTIONS:
+
+      - Given workload type and real-time queue state on both H100 and
+
+        MI300X pools, what is the optimal allocation to minimize H100 usage
+
+        while meeting SLO?
+
+      - When should prefill be deflected to MI300X (slower but frees H100)?
+
+        What is the queue length threshold?
+
+      - When should decode be deflected to H100 (wastes compute but clears
+
+        MI300X queue)? What is the queue length threshold?
+
+      - How does the cost asymmetry (H100 is 2-3x more expensive than
+
+        MI300X) change the deflection decision vs same-vendor?
+
+      - How to manage SGLang RadixAttention prefix cache when prefill and
+
+        decode may run on either vendor dynamically?
+
+      - What is the theoretical minimum H100 count for a given workload
+
+        distribution and MI300X pool size?
 
 
 1. KV CACHE COMPRESSION/QUANTIZATION FOR CROSS-VENDOR TRANSFER
