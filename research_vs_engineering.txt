@@ -24,7 +24,7 @@ ENGINEERING
 
 Research
 
-1. Adaptive prefill / decode allocation
+Idea 1. Adaptive prefill / decode allocation
 
 Problem : "Always H100=prefill, MI300X=decode" is not optimal. The allocation of H100 and MI300X instances to prefill and decode pools should adapt based on below factors.
 
@@ -47,7 +47,6 @@ Reference
 - Decode side: slack-guided adaptive batching (uses gap between per-step decode time and TPOT SLO to pack more requests)
 - Result: 23.9% TTFT SLO improvement, 27.1% TPOT SLO improvement
 - RELEVANCE: Good baseline for SLO-aware scheduling. But assumes homogeneous GPUs. Cross-vendor adds: which vendor to schedule on, not just when to schedule.
-
 
 2. NetKV (https://arxiv.org/pdf/2606.03910)
 - Network-aware decode instance selection
@@ -76,78 +75,95 @@ Reference
 - Limitations : It uses GDDR accelerators (not H100) for prefill, It focuses on system design, NOT adaptive scheduling, Static allocation (GDDR=prefill, HBM=decode always), Does NOT study when to deflect prefill to HBM or decode to GDDR, Does NOT study workload-dependent or queue-dependent allocation, Does NOT use SGLang or address RadixAttention
 
 6. Prefill Deflection (https://arxiv.org/pdf/2607.02043)
+- Load-aware prefill deflection scheduler for disaggregated LLM serving
+- Key insight: prefill execution is only 2-23% of P95 TTFT; queuing and KV cache transfer dominate the rest
+- Lets decode nodes serve prefill as chunked-prefill steps interleaved with in-flight decode batches, eliminating inter-node KV transfer for deflected requests
+- For each queued request, estimates TTFT on prefill node vs decode node, deflects when decode path gives lower TTFT
+- Result: 81% P95 TTFT reduction, 79% SLO attainment improvement
+- RELEVANCE: Directly addresses the "when to deflect prefill to decode nodes" question. But assumes homogeneous GPUs (all A100). Cross-vendor adds: deflecting prefill to MI300X is slower compute (1307 vs 1979 TFLOPS), deflecting decode to H100 wastes expensive compute with lower bandwidth (3350 vs 5300 GB/s). The cost asymmetry between vendors makes the deflection decision fundamentally harder than same-vendor.
 
 
-THE RESEARCH GAP (WHAT NOBODY HAS DONE):
+THE RESEARCH Possibility
+- HMA-Serve proves cross-vendor disaggregation works at the system level. Prefill Deflection shows dynamic prefill/decode reallocation helps. But NOBODY has combined them:
+- Cross-vendor + adaptive scheduling: when should H100 handle decode or MI300X handle prefill, given vendor asymmetry AND queue state?
+- The cost model is fundamentally different from same-vendor: 
+  - Deflecting prefill to MI300X: slower compute (1307 vs 1979 TFLOPS)
+  - Deflecting decode to H100: wastes expensive compute, lower bandwidth (3350 vs 5300 GB/s)
+  - The cost asymmetry between vendors makes the deflection decision harder than same-vendor
 
-    
-
-      HMA-Serve proves cross-vendor disaggregation works at the system
-
-      level. Prefill Deflection shows dynamic prefill/decode reallocation
-
-      helps. But NOBODY has combined them:
-
-    
-
-      - Cross-vendor + adaptive scheduling: when should H100 handle decode
-
-        or MI300X handle prefill, given vendor asymmetry AND queue state?
-
-      - The cost model is fundamentally different from same-vendor:
-
-        - Deflecting prefill to MI300X: slower compute (1307 vs 1979 TFLOPS)
-
-        - Deflecting decode to H100: wastes expensive compute, lower bandwidth
-
-          (3350 vs 5300 GB/s)
-
-        - The cost asymmetry between vendors makes the deflection decision
-
-          harder than same-vendor
-
-      - SGLang RadixAttention: prefix cache management across vendor boundary
-
-        is unique to SGLang and not addressed by any prior work
-
-    
-
-    SPECIFIC RESEARCH QUESTIONS:
-
-      - Given workload type and real-time queue state on both H100 and
-
-        MI300X pools, what is the optimal allocation to minimize H100 usage
-
-        while meeting SLO?
-
-      - When should prefill be deflected to MI300X (slower but frees H100)?
-
-        What is the queue length threshold?
-
-      - When should decode be deflected to H100 (wastes compute but clears
-
-        MI300X queue)? What is the queue length threshold?
-
-      - How does the cost asymmetry (H100 is 2-3x more expensive than
-
-        MI300X) change the deflection decision vs same-vendor?
-
-      - How to manage SGLang RadixAttention prefix cache when prefill and
-
-        decode may run on either vendor dynamically?
-
-      - What is the theoretical minimum H100 count for a given workload
-
-        distribution and MI300X pool size?
+Research questions
+- Given workload type and real-time queue state on both H100 and MI300X pools, what is the optimal allocation to minimize H100 usage while meeting SLO?
+- When should prefill be deflected to MI300X (slower but frees H100)? What is the queue length threshold?
+- When should decode be deflected to H100 (wastes compute but clears MI300X queue)? What is the queue length threshold?
+- How does the cost asymmetry (H100 is 2-3x more expensive than MI300X) change the deflection decision vs same-vendor?
+- How to manage SGLang RadixAttention prefix cache when prefill and decode may run on either vendor dynamically?
+- What is the theoretical minimum H100 count for a given workload distribution and MI300X pool size?
 
 
-1. KV CACHE COMPRESSION/QUANTIZATION FOR CROSS-VENDOR TRANSFER
-- Can you compress KV cache to INT4/FP8 for transfer, then decompress on MI300X?
-- Maybe INT4 works fine for 7B but degrades 70B. Maybe FP8 is fine but INT4 breaks long-context generation. (uncertainty)
-- Need to evaluate on perplexity, MMLU, HumanEval, long-context benchmarks across multiple model sizes
-- Need ablation: which layers' KV cache is more sensitive to compression? Can you compress some layers more than others?
+Idea 2. Cross-vendor Speculative Decoding
 
-2. OPTIMAL DISAGGREGATION BOUNDARY FORMULATION
-- Should ALL prefill be on H100 and ALL decode on MI300X?
-- Need to formalize as constrained optimization with vendor-level asymmetry (new dimension not in Helix/DistServe)
-- Need to solve it for different model sizes, context lengths, output length distributionsi 
+Problem: In standard disaggregated serving, H100 does prefill, then MI300X does decode sequentially — one token at a time. But H100 has massive compute (1979 TFLOPS) that sits IDLE during decode phase. What if H100 generates draft tokens speculatively (fast, using its compute advantage), and MI300X verifies them in parallel (using its memory bandwidth advantage for parallel attention)? This turns vendor asymmetry from a CHALLENGE into an ADVANTAGE.
+
+GOAL: Reduce H100 usage by making each H100 handle more requests through speculative drafting, while MI300X handles verification + decode. Fewer H100s serve the same workload because each H100 spends less time per request (drafts tokens, doesn't do full decode).
+
+Reference
+1. SPIN (https://arxiv.org/pdf/2503.15921, INFOCOM 2025)
+- Uses multiple heterogeneous draft models (different sizes) for speculative decoding, with learning-based SSM selection
+- Pipelines speculation and verification phases on GPUs
+- Result: 2.28x performance improvement
+- RELEVANCE: Closest to heterogeneous speculative decoding. But "heterogeneous" means different model sizes, not different GPU vendors. Cross-vendor adds: can H100-generated draft tokens be verified efficiently on MI300X with different attention kernels and numerical behavior?
+
+2. DuoDecoding (https://arxiv.org/pdf/2503.00784)
+- Deploys draft model on CPU and target model on GPU for parallel execution
+- Hardware-aware optimal draft budget to minimize idle time
+- Dynamic multi-sequence drafting to enhance draft quality
+- Result: 2.61x speedup, TTFT reduced to 83% of conventional speculative decoding
+- RELEVANCE: Shows that splitting draft and verify across different hardware works. But CPU-GPU split, not GPU-GPU cross-vendor. Cross-vendor adds: both sides are GPUs but with different architectures, different attention kernels, different numerical behavior — the draft-verify alignment is more complex.
+
+3. Mirror Speculative Decoding (https://arxiv.org/pdf/2510.13161)
+- Explicitly maps computation across heterogeneous accelerators (GPU and NPU)
+- Draft speculates forward continuations while target simultaneously speculates correction paths — bidirectional speculation
+- Speculative streaming: draft emits multiple tokens per step
+- Result: 2.8x-5.8x wall-time speedup, 30% improvement over EAGLE3
+- RELEVANCE: Closest to cross-vendor speculative decoding! Maps draft and verify across GPU+NPU. But uses NPU (not MI300X GPU), does not address KV cache format mismatch between vendors, does not study numerical divergence impact on acceptance rate, and does not consider SGLang RadixAttention.
+
+4. EAGLE-Pangu (https://arxiv.org/pdf/2603.08088)
+- Ports EAGLE-3 tree speculative decoding to Ascend NPUs
+- Key finding: tree speculation is "brittle when ported across heterogeneous backends" — attention masking, KV-cache layouts, and indexing semantics are NOT interchangeable across accelerators
+- Result: 1.27x average throughput improvement, 2.46x at p99
+- RELEVANCE: Directly demonstrates that speculative decoding across different accelerator architectures faces real challenges (KV-cache layout, attention masking). But this is a porting paper (NVIDIA → Ascend NPU), not a study of cross-vendor GPU-to-GPU speculative decoding. Does not study acceptance rate under numerical divergence.
+
+5. Prima.cpp (https://arxiv.org/pdf/2504.08791)
+- Distributed inference on consumer home clusters with mixed CPUs/GPUs
+- Heterogeneity-aware scheduler (Halda) co-optimizes per-device workloads
+- Result: 5-17x lower TPOT vs exo/dllama, 70B at 674ms/token
+- RELEVANCE: Shows heterogeneous inference works at consumer scale. But consumer focus (CPU+GPU mix, Wi-Fi), not datacenter cross-vendor GPU. Does not address speculative decoding across vendors or SGLang integration.
+
+6. AHASD (https://arxiv.org/pdf/2604.25326)
+- Asynchronous heterogeneous architecture for speculative decoding on mobile (NPU+PIM)
+- Task-level DLM-TLM decoupling for parallel drafting and verification
+- Entropy-history-aware drafting control to suppress invalid drafting
+- Result: 4.2x throughput, 5.6x energy efficiency over GPU-only baseline
+- RELEVANCE: Shows heterogeneous speculative decoding works on mobile. But mobile NPU+PIM, not datacenter GPU cross-vendor. Does not address numerical divergence or KV cache format mismatch.
+
+THE RESEARCH POSSIBILITY
+- Mirror-SD proves heterogeneous speculative decoding (GPU+NPU) works at the algorithm level. EAGLE-Pangu shows that porting speculative decoding across accelerators is non-trivial (KV-cache layout, attention masking differences). But NOBODY has studied cross-vendor GPU-to-GPU speculative decoding where:
+(a) H100 (compute-rich, 1979 TFLOPS) generates draft tokens using its compute advantage
+(b) MI300X (memory-rich, 5300 GB/s) verifies multiple tokens in parallel using its bandwidth advantage
+(c) The KV cache format and numerical behavior DIFFER between drafter and verifier
+- This is fundamentally different from all prior work because:
+  - SPIN, DuoDecoding: heterogeneous model sizes or CPU-GPU split, not cross-vendor GPU
+  - Mirror-SD: GPU+NPU, but does not study acceptance rate under numerical divergence
+  - EAGLE-Pangu: shows porting is hard, but is a porting paper, not a cross-vendor speculative decoding design
+  - Nobody studies: does numerical divergence between H100 and MI300X reduce speculative decoding acceptance rate?
+- Key unknown: if H100 generates draft tokens with NVIDIA tensor cores and MI300X verifies with AMD matrix cores, the attention scores may differ due to FP accumulation differences. If verification attention scores differ from drafting attention scores, the acceptance rate may drop. This is a new problem that does not exist in any same-vendor or same-architecture speculative decoding system.
+
+Research questions
+- Can H100 serve as an efficient draft model generator while MI300X verifies? What is the optimal draft length K given the compute/bandwidth asymmetry?
+- Does numerical divergence between H100 and MI300X reduce speculative decoding acceptance rate? By how much?
+- How to manage the KV cache when H100 generates drafts and MI300X verifies — does MI300X need to recompute KV for rejected tokens? Or can it reuse H100's KV cache (after format conversion)?
+- How does this interact with SGLang RadixAttention? If H100 generates draft tokens, does the prefix cache on H100 help or conflict with MI300X decode cache?
+- What is the throughput improvement vs standard cross-vendor disaggregated serving (H100 prefill + MI300X decode without speculation)? How many H100s can be freed?
+- Can cross-vendor speculative decoding be combined with adaptive scheduling (Research 1)? When workload is decode-heavy, use H100 for drafting; when prefill-heavy, use H100 for prefill — dynamic role switching.
+
+
