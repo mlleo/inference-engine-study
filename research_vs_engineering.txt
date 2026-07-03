@@ -1,0 +1,36 @@
+ENGINEERING
+
+1. BASIC KV CACHE FORMAT CONVERSION LAYER
+- H100 (FlashAttention) produces KV cache in layout A
+- MI300X (ROCm attention) expects layout B
+- Write a conversion function: rearrange tensor strides, head ordering, padding
+- Success condition : decode on MI300X produces correct tokens
+
+2. KV CACHE TRANSFER PIPELINE
+- Transfer KV cache from H100 node to MI300X node over network/RDMA
+- Overlap transfer with prefill computation to hide latency
+- Standard systems engineering — RDMA, memory buffers, async copy
+- Success condition : transfer latency < prefill time (hidden)
+
+3. STATIC RESOURCE ALLOCATION
+- Given your workload profile, assign H100s to prefill pool, MI300Xs to decode pool at a fixed ratio
+- Success condition : throughput improves vs homogeneous baseline
+
+4. END-TO-END CORRECTNESS VERIFICATION
+- Run model end-to-end across vendors
+- Verify outputs match within tolerance
+- Standard testing
+- Success condition : Outputs are correct
+
+Research
+
+1. KV CACHE COMPRESSION/QUANTIZATION FOR CROSS-VENDOR TRANSFER
+- Can you compress KV cache to INT4/FP8 for transfer, then decompress on MI300X?
+- Maybe INT4 works fine for 7B but degrades 70B. Maybe FP8 is fine but INT4 breaks long-context generation. (uncertainty)
+- Need to evaluate on perplexity, MMLU, HumanEval, long-context benchmarks across multiple model sizes
+- Need ablation: which layers' KV cache is more sensitive to compression? Can you compress some layers more than others?
+
+2. OPTIMAL DISAGGREGATION BOUNDARY FORMULATION
+- Should ALL prefill be on H100 and ALL decode on MI300X?
+- Need to formalize as constrained optimization with vendor-level asymmetry (new dimension not in Helix/DistServe)
+- Need to solve it for different model sizes, context lengths, output length distributionsi 
