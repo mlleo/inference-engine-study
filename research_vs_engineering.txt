@@ -38,6 +38,23 @@ Factor 2. QUEUEING STATUS (real-time)
 - If prefill queue on H100 is long but MI300X decode queue is empty -> should some MI300Xs run prefill? (slower but reduces H100 queue)
 - If decode queue on MI300X is long but H100 prefill queue is empty -> should some H100s run decode? (wastes compute but clears queue)
 
+
+Factor 1. Workload-Driven Cross-Vendor Phase Imbalance 
+- Input/output token length distribution 
+- Prefill-to-decode demand ratio under TTFT/TPOT SLOs 
+- Request arrival rate and burstiness 
+- H100/MI300X phase-specific throughput and cost asymmetry 
+- Prefix-cache reuse and KV-cache footprint 
+Naive solution: Estimate the workload’s prefill/decode pressure and statically reserve more H100s for prefill-heavy periods and more MI300Xs for decode-heavy periods, while keeping a small flexible pool for imbalance.
+
+Factor 2. Runtime Cross-Vendor Deflection Tradeoff 
+- Current prefill/decode queueing delay on each vendor pool 
+- Per-request TTFT/TPOT slack 
+- Expected service-time gap between default and deflected vendors 
+- Cross-vendor penalty: KV transfer, cache miss, format conversion, network cost 
+- H100 opportunity cost and future phase-starvation risk 
+Naive solution: Deflect prefill to MI300X or decode to H100 only when the estimated SLO benefit exceeds the service-time penalty, cross-vendor overhead, and H100 opportunity cost.
+
 GOAL: Minimize H100 count while meeting SLO, given MI300X pool and dynamic workload.
 
 Reference
