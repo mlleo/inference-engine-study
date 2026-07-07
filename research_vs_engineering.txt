@@ -24,20 +24,9 @@ ENGINEERING
 
 Research
 
-Idea 1. Adaptive prefill / decode allocation
+Idea. Adaptive prefill / decode allocation
 
 Problem : "Always H100=prefill, MI300X=decode" is not optimal. The allocation of H100 and MI300X instances to prefill and decode pools should adapt based on below factors.
-
-Factor 1. Workload type
-- Decode-heavy (chatbot, coding): MI300Xs saturated, H100s idle
-- Prefill-heavy (RAG, summarization): H100s saturated, MI300Xs idle
-- Mixed: need dynamic rebalance
-
-Factor 2. QUEUEING STATUS (real-time)
-- Even for the same workload type, queue lengths change in real-time
-- If prefill queue on H100 is long but MI300X decode queue is empty -> should some MI300Xs run prefill? (slower but reduces H100 queue)
-- If decode queue on MI300X is long but H100 prefill queue is empty -> should some H100s run decode? (wastes compute but clears queue)
-
 
 Factor 1. Workload-Driven Cross-Vendor Phase Imbalance 
 - Input/output token length distribution 
