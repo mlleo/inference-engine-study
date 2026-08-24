@@ -1,0 +1,130 @@
+A deep dive into Option 1: SGLang’s Memory Management & HiCache (Hierarchical KV Cache) is the perfect next step. It directly bridges the logical structure you studied in Session 2 (Radix Trees) with the physical hardware layout of the machine and cluster 
+ .
+
+Here is a highly detailed, session-by-session breakdown to help you structure this next seminar. You can think of this session as mapping "Logical Pointers to Physical Silicon" 
+ .
+
+📌 Session 4 Outline: Deep-Dive Memory Management & HiCache
+[Logical Radix Tree (Tokens)]  <-- (Metadata & State Sync)
+             │
+             ▼
+[HiRadixTree / Page Table]
+             │
+   ┌─────────┼─────────┐
+   ▼         ▼         ▼
+ L1 Cache  L2 Cache  L3 Cache
+  (GPU)     (CPU)    (Remote)
+1. Physical vs. Logical Memory: SGLang’s Two-Level Pool
+To set the foundation, you should first explain how SGLang physically stores data compared to how it logically tracks it.
+
+Logical vs. Physical: Radix Tree nodes (from Session 2) are logical collections of tokens 
+ . Under the hood, the actual float tensors of the Key and Value vectors are sliced and stored across a physical, non-contiguous Two-Level Pool 
+ :
+
+ReqToTokenPool (Request Pool): Allocates the high-level slots and offsets for handling request metadata 
+ .
+
+TokenToKVPool (Token Pool): The actual virtual memory pages holding the physical tensors 
+ .
+
+Page Alignment: Explain how SGLang maps these pools dynamically, including why SGLang historically aligned pages at a 1-token granularity (for maximum flexibility in Radix matching) but supports larger page configurations for hardware performance 
+ .
+
+2. Transitioning to HiCache: Why HBM is No Longer Enough
+Explain the motivation behind HiCache's development (published by LMSYS in late 2025/2026) 
+ .
+
+The Capacity Bottleneck: While RadixAttention is perfect for GPU VRAM (HBM), in long-context tasks (such as agentic coding or multi-turn chats) the HBM quickly fills up 
+ . When VRAM is full, SGLang must evict leaf nodes 
+ .
+
+The Solution (HiCache): Mimics the classic CPU 3-level cache model 
+ :
+
+L1 (GPU Memory): Ultra-fast, private per instance 
+ .
+
+L2 (Host CPU Memory/DRAM): Larger capacity (~10x larger), private per instance 
+ .
+
+L3 (Distributed Cluster Storage): Virtually unlimited, shared across instances over RDMA networks (using backends like Mooncake or 3FS) 
+ .
+
+3. The Under-the-Hood Mechanics of HiCache
+This is the core of your technical deep dive. We recommend walking through three main code-level and architectural behaviors 
+ :
+
+A. The Metadata Map: HiRadixTree
+In RadixAttention, tree nodes only hold the device indices pointing to local GPU VRAM 
+ .
+
+The Multi-Tier Pointer: Show how HiRadixTree extends this. Each node now acts as an advanced page table 
+ . It records the state of the KV cache segment: Is it currently in L1? Has it been offloaded to L2? Does it reside in L3? Or is it mirrored across multiple tiers 
+ ?
+
+Multi-Rank Synchronization: SGLang uses Tensor Parallelism (TP) 
+ . During a cache lookup across multiple GPUs, explain how SGLang uses all_reduce(op=min) operations to reach a cluster consensus on which ranks successfully hit the cache and how much of the prefix can be safely reused 
+ .
+
+B. Eviction and Write Policies
+What happens when L1 (GPU VRAM) fills up 
+ ?
+
+Batch LRU Eviction: Explain that instead of updating a doubly-linked list on every single token generation (which would destroy GPU performance), SGLang groups evictable leaf nodes, heapifies them, and evicts them in batches 
+ .
+
+Hierarchical Spilling: Instead of deleting the evicted leaf node, the Cache Controller determines if it should be serialized and moved to L2 (Host RAM) 
+ .
+
+Write-Back Policies:
+
+write_through: Synchronously mirrors data to L2 as soon as it's computed 
+ .
+
+write_through_selective: Uses hit-count tracking to only offload "hot" prefix branches, saving valuable CPU-GPU bus bandwidth 
+ .
+
+C. Advanced Hardware/IO Kernels (The Performance Bottleneck)
+Simply offloading to L2 is useless if copying the data back to the GPU takes longer than just recomputing the prefill 
+ . You should highlight how SGLang solves this:
+
+Custom GPU-Assisted I/O Kernels: SGLang developed custom warp-level parallel IO kernels that achieve up to 3× higher host-to-device transfer speeds compared to a native cudaMemcpyAsync 
+ .
+
+Optimized Memory Layouts: Examine the CPU-side layout abstractions:
+
+layer_first: The default layout for GPU compute 
+ .
+
+page_first: Groups all layers of a single page contiguously, making it highly optimized for zero-copy streaming to L3 storage backends 
+ .
+
+Compute-Transfer Overlapping: How the scheduler asynchronously prefetches the KV cache for Layer $N+1$ from the host DRAM while the GPU is actively executing the attention kernel for Layer $N$ 
+ .
+
+4. Scaling Globally: L3 Distributed Backends (Mooncake)
+Wrap up the session by showing how this architecture scales to massive, multi-node clusters 
+ .
+
+Mooncake Integration: Explain how Mooncake aggregates idle CPU memory across a cluster into a unified virtual L3 cache pool 
+ .
+
+Prefetch & Zero-Copy RDMA: When a request hits L3, the SGLang host memory passes raw addresses directly to the remote NIC, which uses RDMA to bypass the OS kernel entirely, feeding the KV cache straight into L2 Host memory 
+ .
+
+Prefill-Decode Disaggregation (PD-Disaggregation): Explain the modern cluster architecture where dedicated "Prefill Nodes" compute the KV cache, save it immediately to L3, and "Decode Nodes" pull the KV cache chunks on-demand via RDMA 
+ .
+
+💡 Suggested Agenda for the Seminar Session
+[15 mins] The Physical Layer: The Two-Level Memory Pool (memory_pool.py) 
+ .
+
+[15 mins] The Architecture: Transitioning from RadixTree to HiRadixTree and the CPU 3-tier cache analogy 
+ .
+
+[20 mins] Deep Dive into Code/Math: Eviction heapifying, memory layouts (layer_first vs page_first), and custom IO kernels 
+ .
+
+[10 mins] System Level Scaling: L3 backends (Mooncake), RDMA zero-copy, and PD-Disaggregation 
+ .
+
