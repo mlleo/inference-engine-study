@@ -16,9 +16,6 @@ import inspect
 import math
 import os
 import random
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common.trace import Request, Trace
 from common.textgen import make_text, lognormal_int, poisson_arrivals
