@@ -29,10 +29,7 @@ import argparse
 import asyncio
 import json
 import os
-import sys
 import time
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common.trace import Request, Trace
 
@@ -218,7 +215,8 @@ def main() -> None:
                            args.max_inflight, args.grammar))
 
     os.makedirs(args.out, exist_ok=True)
-    path = os.path.join(args.out, f"{trace.name}__{args.tag}.json")
+    stem = os.path.splitext(os.path.basename(args.trace))[0]
+    path = os.path.join(args.out, f"{stem}__{args.tag}.json")
     with open(path, "w") as f:
         json.dump({"trace": trace.name, "tag": args.tag, "url": args.url,
                    "meta": trace.meta, "records": recs}, f, ensure_ascii=False)
