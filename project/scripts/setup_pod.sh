@@ -9,7 +9,8 @@ export HF_HOME=${HF_HOME:-/workspace/hf}      # <- 네트워크 볼륨 경로
 mkdir -p "$HF_HOME"
 
 # 버전 고정은 협상 대상이 아니다. 5명이 서로 다른 커밋을 쓰면 비교가 무의미해진다.
-SGLANG_VERSION=${SGLANG_VERSION:?SGLANG_VERSION 을 반드시 고정할 것}
+# 기본값 0.5.18 로 고정. 다른 버전을 쓰려면 SGLANG_VERSION 을 명시적으로 덮어쓸 것.
+SGLANG_VERSION=${SGLANG_VERSION:-0.5.18}
 MODEL=${MODEL:-Qwen/Qwen3-4B}
 
 pip install --upgrade pip
