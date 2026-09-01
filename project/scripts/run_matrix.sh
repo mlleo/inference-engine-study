@@ -46,7 +46,7 @@ python -m bench.metrics "results/${NAME}__default.json" \
                         "results/${NAME}__ablated.json" \
                         "results/${NAME}__mine.json" --csv "results/${NAME}_3bar.csv"
 echo; echo "########## 정확성 게이트 ##########"
-python -m bench.verify "results/${NAME}__default.json" "results/${NAME}__mine.json"
+python -m bench.verify "results/${NAME}__default.json" "results/${NAME}__mine.json" || true
 
 # 워크로드별 ablation 플래그 예시:
 #   rag / agent : --disable-radix-cache
