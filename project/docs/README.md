@@ -33,7 +33,7 @@ xgrammar jump-forward, EAGLE, hierarchical KV offload — 대부분 이미 들�
 | # | 제출물 | 형식 | 마감 |
 |---|--------|------|------|
 | 1 | 베이스라인 실행 결과 + 병목 가설 | 1페이지 요약 | 2주차 |
-| 2 | 최종 보고서 | `docs/보고서_템플릿.md` 형식 | 5주차 |
+| 2 | 최종 보고서 | [`04_보고서_템플릿.md`](04_보고서_템플릿.md) 형식 | 5주차 |
 | 3 | 코드 | SGLang fork 의 diff + 재현 스크립트 | 5주차 |
 | 4 | PoC 발표 | 15분 발표 + 10분 Q&A | 5주차 |
 | 5 | 원시 결과 파일 | `results/*.json` 전체 | 5주차 |
@@ -45,7 +45,7 @@ xgrammar jump-forward, EAGLE, hierarchical KV offload — 대부분 이미 들�
 
 ## 3. 수행 5단계
 
-각 단계의 상세는 [`docs/02_수행단계.md`](docs/02_수행단계.md) 참고.
+각 단계의 상세는 [`02_수행단계.md`](02_수행단계.md) 참고.
 
 | 단계 | 이름 | 핵심 질문 | 산출물 |
 |------|------|-----------|--------|
@@ -64,29 +64,42 @@ xgrammar jump-forward, EAGLE, hierarchical KV offload — 대부분 이미 들�
 
 | # | 워크로드 | 주 병목 | 배정 카드 |
 |---|----------|---------|-----------|
-| W1 | 롱컨텍스트 RAG | Prefill, KV 용량 | [W1_RAG.md](docs/workloads/W1_RAG.md) |
-| W2 | AI 에이전트 (멀티턴 + 툴) | 캐시 유지(retention) | [W2_Agent.md](docs/workloads/W2_Agent.md) |
-| W3 | 장문 추론 (Long CoT) | Decode, KV 증가 | [W3_Reasoning.md](docs/workloads/W3_Reasoning.md) |
-| W4 | 구조화 출력 (JSON 추출) | 요청당 CPU 오버헤드 | [W4_Structured.md](docs/workloads/W4_Structured.md) |
-| W5 | 혼합 SLO 멀티테넌트 | 스케줄링 정책 | [W5_Mixed.md](docs/workloads/W5_Mixed.md) |
+| W1 | 롱컨텍스트 RAG | Prefill, KV 용량 | [W1_RAG.md](workloads/W1_RAG.md) |
+| W2 | AI 에이전트 (멀티턴 + 툴) | 캐시 유지(retention) | [W2_Agent.md](workloads/W2_Agent.md) |
+| W3 | 장문 추론 (Long CoT) | Decode, KV 증가 | [W3_Reasoning.md](workloads/W3_Reasoning.md) |
+| W4 | 구조화 출력 (JSON 추출) | 요청당 CPU 오버헤드 | [W4_Structured.md](workloads/W4_Structured.md) |
+| W5 | 혼합 SLO 멀티테넌트 | 스케줄링 정책 | [W5_Mixed.md](workloads/W5_Mixed.md) |
 
 ---
 
 ## 5. 저장소 구조
 
 ```
-common/trace.py            공용 트레이스 스키마  ← 1주차에 확정, 이후 수정 금지
-common/textgen.py          결정적 합성 텍스트 생성
-workloads/generators.py    5개 워크로드 생성기
-bench/replay.py            open-loop + 의존성 인지 재생 클라이언트
-bench/metrics.py           오프라인 지표 계산 (GPU 불필요)
-bench/analyze.py           병목 진단 리포트  ← 2단계 주력 도구
-bench/verify.py            greedy 출력 정확성 게이트
-scripts/setup_pod.sh       RunPod 세팅 + 모델 캐싱
-scripts/run_baseline.sh    베이스라인 1회 실행 + 진단   ← 제일 먼저 돌릴 것
-scripts/run_matrix.sh      3-bar 실험 (default/ablated/mine)
-scripts/cross_replay.sh    5주차 교차 검증
-docs/                      문서 일체
+project/
+├── common/
+│   ├── trace.py            공용 트레이스 스키마  ← 1주차에 확정, 이후 수정 금지
+│   └── textgen.py          결정적 합성 텍스트 생성
+├── workloads/
+│   └── generators.py       5개 워크로드 생성기
+├── bench/
+│   ├── replay.py           open-loop + 의존성 인지 재생 클라이언트
+│   ├── metrics.py          오프라인 지표 계산 (GPU 불필요)
+│   ├── analyze.py          병목 진단 리포트  ← 2단계 주력 도구
+│   └── verify.py           greedy 출력 정확성 게이트
+├── scripts/
+│   ├── setup_pod.sh        RunPod 세팅 + 모델 캐싱
+│   ├── run_baseline.sh     베이스라인 1회 실행 + 진단   ← 제일 먼저 돌릴 것
+│   ├── run_matrix.sh       3-bar 실험 (default/ablated/mine)
+│   └── cross_replay.sh     5주차 교차 검증
+├── docs/
+│   ├── README.md           프로젝트 안내 (이 파일)
+│   ├── 01_환경설정.md
+│   ├── 02_수행단계.md
+│   ├── 03_실험프로토콜.md
+│   ├── 04_보고서_템플릿.md
+│   ├── 05_평가루브릭.md
+│   └── workloads/          워크로드별 배정 카드
+└── requirements.txt
 ```
 
 ---
@@ -94,7 +107,7 @@ docs/                      문서 일체
 ## 6. 첫날에 할 일 (30분)
 
 ```bash
-git clone <이 저장소> && cd sglang-study
+git clone <이 저장소> && cd inference-engine-study/project
 pip install -r requirements.txt
 
 # (1) GPU 파드에서 환경 세팅
@@ -122,7 +135,7 @@ bash scripts/run_baseline.sh agent
 2. **Python 만 수정한다.** `sgl-kernel` 을 다시 빌드해야 하는 순간 며칠이
    날아간다. 이 제약은 자연스럽게 스케줄러/캐시/정책 쪽으로 주제를 몰아주는데,
    그게 이 스터디의 적정 범위다.
-3. **3-bar 없이는 어떤 숫자도 보고하지 않는다.** ([`docs/03_실험프로토콜.md`](docs/03_실험프로토콜.md))
+3. **3-bar 없이는 어떤 숫자도 보고하지 않는다.** ([`03_실험프로토콜.md`](03_실험프로토콜.md))
 4. **정확성 게이트를 통과하지 못한 속도 향상은 없는 것으로 친다.**
 5. **throughput 이 아니라 goodput 을 보고한다.**
 
