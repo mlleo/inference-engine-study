@@ -111,7 +111,7 @@ git clone <이 저장소> && cd inference-engine-study/project
 pip install -r requirements.txt
 
 # (1) GPU 파드에서 환경 세팅
-SGLANG_VERSION=<확정된 버전> MODEL=Qwen/Qwen3-4B bash scripts/setup_pod.sh
+SGLANG_VERSION=0.5.18 MODEL=Qwen/Qwen3-4B bash scripts/setup_pod.sh
 
 # (2) 배정받은 워크로드의 베이스라인 실행 (예: agent)
 bash scripts/run_baseline.sh agent
