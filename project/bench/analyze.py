@@ -18,9 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-
-sys.path.insert(0, __file__.rsplit("/", 2)[0])
 
 from bench.metrics import per_request, pct
 
