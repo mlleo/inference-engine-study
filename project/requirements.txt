@@ -1,0 +1,3 @@
+aiohttp
+transformers
+huggingface_hub
